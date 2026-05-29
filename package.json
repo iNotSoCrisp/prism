@@ -1,0 +1,108 @@
+{
+  "name": "prism",
+  "productName": "Prism",
+  "version": "1.0.0",
+  "description": "Every model. One interface. — A cross-platform AI desktop chat client for any provider.",
+  "main": "./out/main/index.js",
+  "author": {
+    "name": "Iteration Labz",
+    "url": "https://github.com/IterationLabz"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IterationLabz/prism.git"
+  },
+  "bugs": {
+    "url": "https://github.com/IterationLabz/prism/issues"
+  },
+  "homepage": "https://github.com/IterationLabz/prism",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "package": "npm run build && electron-builder --publish never",
+    "package:mac": "npm run build && electron-builder --mac --publish never",
+    "package:win": "npm run build && electron-builder --win --publish never",
+    "package:linux": "npm run build && electron-builder --linux --publish never"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@google/generative-ai": "latest",
+    "better-sqlite3": "latest",
+    "highlight.js": "latest",
+    "lucide-react": "latest",
+    "openai": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "rehype-highlight": "latest",
+    "zustand": "latest"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "latest",
+    "@tailwindcss/postcss": "latest",
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^5.1.2",
+    "autoprefixer": "latest",
+    "electron": "^41.7.1",
+    "electron-builder": "latest",
+    "electron-vite": "^5.0.0",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vite": "^7.3.0"
+  },
+  "build": {
+    "appId": "com.iterationlabz.prism",
+    "productName": "Prism",
+    "copyright": "Copyright © 2025 Iteration Labz",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "icon": "build/icon.png",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "darkModeSupport": true,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png"
+    }
+  }
+}
