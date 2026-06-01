@@ -13,7 +13,7 @@ import { ModeCards } from './ModeCards'
 import { checkEndpoint } from './OnboardingModal'
 import { useToast } from './Toast'
 
-export type SettingsTab = 'connection' | 'preferences'
+export type SettingsTab = 'connection' | 'preferences' | 'memory'
 
 interface SettingsModalProps {
   initialTab?: SettingsTab
@@ -61,6 +61,7 @@ const PROVIDER_GROUPS: ProviderGroup[] = [
     title: 'Open Source Providers',
     defaultOpen: false,
     fields: [
+
       { key: 'deepseekKey',  setting: 'api_key_deepseek',  label: 'DeepSeek',       placeholder: 'sk-...',      docsUrl: 'https://platform.deepseek.com/api_keys' },
       { key: 'moonshotKey',  setting: 'api_key_moonshot',  label: 'Moonshot (Kimi)',placeholder: 'sk-...',      docsUrl: 'https://platform.moonshot.cn/console/api-keys' },
       { key: 'qwenKey',      setting: 'api_key_qwen',      label: 'Qwen',           placeholder: 'sk-...',      docsUrl: 'https://bailian.console.aliyun.com/?apiKey=1' },
@@ -112,6 +113,11 @@ export function SettingsModal({ initialTab = 'connection', onClose }: SettingsMo
   const [endpointStatus, setEndpointStatus] = useState<EndpointStatus>('idle')
   const [model, setModel] = useState(defaultModel || DEFAULT_MODEL)
   const [showEndpointModels, setShowEndpointModels] = useState(false)
+  const [memories, setMemories] = useState<any[]>([])
+  const [memoriesLoading, setMemoriesLoading] = useState(false)
+  const [autoRead, setAutoRead] = useState(false)
+  const [ttsVoice, setTtsVoice] = useState('af_heart')
+  const [ttsSpeed, setTtsSpeed] = useState(1.0)
 
   useEffect(() => {
     if (!window.api) return
@@ -127,6 +133,15 @@ export function SettingsModal({ initialTab = 'connection', onClose }: SettingsMo
       setEndpointUrl(config.customEndpoint.endpointUrl || DEFAULT_ENDPOINT_URL)
       setEndpointKey(config.customEndpoint.apiKey || '')
       setModel(config.defaultModel)
+      
+      const ttsVoiceSaved = await window.api.settings.get('tts_voice')
+      if (ttsVoiceSaved) setTtsVoice(ttsVoiceSaved)
+      
+      const ttsSpeedSaved = await window.api.settings.get('tts_speed')
+      if (ttsSpeedSaved) setTtsSpeed(parseFloat(ttsSpeedSaved))
+      
+      const autoReadSaved = await window.api.settings.get('auto_read_responses')
+      setAutoRead(autoReadSaved === 'true')
     }
     void load()
   }, [setConnectionMode, setCustomEndpointConfig, setDefaultModel, setDirectConfig])
@@ -142,6 +157,29 @@ export function SettingsModal({ initialTab = 'connection', onClose }: SettingsMo
   const defaultModelOptions = useMemo(() => {
     return [...new Set([...PREFERENCE_MODELS, model])]
   }, [model])
+
+  useEffect(() => {
+    if (tab === 'memory') {
+      void loadMemories()
+    }
+  }, [tab])
+
+  const loadMemories = async () => {
+    if (!window.api) return
+    setMemoriesLoading(true)
+    try {
+      const mems = await window.api.memories.getAll()
+      setMemories(mems)
+    } finally {
+      setMemoriesLoading(false)
+    }
+  }
+
+  const deleteMemory = async (id: string) => {
+    if (!window.api) return
+    await window.api.memories.delete(id)
+    await loadMemories()
+  }
 
   const toggleGroup = (title: string): void => {
     setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }))
@@ -229,12 +267,26 @@ export function SettingsModal({ initialTab = 'connection', onClose }: SettingsMo
 
   // ── Default model ─────────────────────────────────────────────────────────
 
-  const saveDefaultModel = async (nextModel: string): Promise<void> => {
-    if (!window.api) return
-    await window.api.settings.set('default_model', nextModel)
-    setModel(nextModel)
-    setDefaultModel(nextModel)
+  const saveDefaultModel = async (val: string): Promise<void> => {
+    setModel(val)
+    if (window.api) await window.api.settings.set('default_model', val)
+    setDefaultModel(val)
     showToast('Default model saved')
+  }
+
+  const saveAutoRead = async (val: boolean): Promise<void> => {
+    setAutoRead(val)
+    if (window.api) await window.api.settings.set('auto_read_responses', val ? 'true' : 'false')
+  }
+
+  const saveTtsVoice = async (val: string): Promise<void> => {
+    setTtsVoice(val)
+    if (window.api) await window.api.settings.set('tts_voice', val)
+  }
+
+  const saveTtsSpeed = async (val: number): Promise<void> => {
+    setTtsSpeed(val)
+    if (window.api) await window.api.settings.set('tts_speed', val.toString())
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -264,6 +316,9 @@ export function SettingsModal({ initialTab = 'connection', onClose }: SettingsMo
           </button>
           <button className={tab === 'preferences' ? 'active' : ''} type="button" onClick={() => setTab('preferences')}>
             Preferences
+          </button>
+          <button className={tab === 'memory' ? 'active' : ''} type="button" onClick={() => setTab('memory')}>
+            Memory
           </button>
         </div>
 
@@ -516,13 +571,85 @@ export function SettingsModal({ initialTab = 'connection', onClose }: SettingsMo
               </select>
             </div>
 
+            <div className="settings-section">
+              <h3>Voice</h3>
+              <div className="setting-field">
+                <label htmlFor="tts-voice">Voice Preference</label>
+                <select 
+                  id="tts-voice"
+                  value={ttsVoice} 
+                  onChange={(e) => void saveTtsVoice(e.target.value)}
+                >
+                  <option value="af_heart">American Female (Heart)</option>
+                  <option value="af_bella">American Female (Bella)</option>
+                  <option value="af_nicole">American Female (Nicole)</option>
+                  <option value="am_michael">American Male (Michael)</option>
+                  <option value="am_adam">American Male (Adam)</option>
+                  <option value="bf_emma">British Female (Emma)</option>
+                  <option value="bm_george">British Male (George)</option>
+                </select>
+              </div>
+
+              <div className="setting-field" style={{ marginTop: '16px' }}>
+                <label htmlFor="tts-speed" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Speech Speed</span>
+                  <span className="muted">{ttsSpeed.toFixed(1)}x</span>
+                </label>
+                <input
+                  id="tts-speed"
+                  type="range"
+                  min="0.5"
+                  max="2.0"
+                  step="0.1"
+                  value={ttsSpeed}
+                  onChange={(e) => void saveTtsSpeed(parseFloat(e.target.value))}
+                />
+              </div>
+
+              <div className="setting-field checkbox-field" style={{ marginTop: '16px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                  <input type="checkbox" checked={autoRead} onChange={(e) => void saveAutoRead(e.target.checked)} />
+                  Read responses aloud automatically
+                </label>
+              </div>
+              <p className="muted" style={{ marginTop: '6px' }}>When enabled, Prism will use OpenAI Text-to-Speech to read messages hands-free.</p>
+            </div>
+
             <div className="settings-section about-section">
               <h3>About</h3>
               <p className="about-name">Prism</p>
-              <p className="muted">Version 1.0.0</p>
+              <p className="muted">Version 2.0.9</p>
               <p className="about-copy">
                 Every model. One interface.
               </p>
+            </div>
+          </div>
+        )}
+
+        {tab === 'memory' && (
+          <div className="settings-body">
+            <div className="settings-section">
+              <h3>Memory</h3>
+              <p className="muted">Prism learns about you to give better answers over time. You can manage what it remembers here.</p>
+              
+              {memoriesLoading ? (
+                <p className="muted"><RefreshCw size={13} className="spin inline-icon" /> Loading memories...</p>
+              ) : memories.length === 0 ? (
+                <div className="empty-memories">
+                  <p className="muted">No memories yet. Prism will automatically extract facts from your conversations.</p>
+                </div>
+              ) : (
+                <div className="memory-list">
+                  {memories.map(mem => (
+                    <div className="memory-item" key={mem.id}>
+                      <p>{mem.content}</p>
+                      <button type="button" onClick={() => void deleteMemory(mem.id)} aria-label="Forget memory" title="Forget">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

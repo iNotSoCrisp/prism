@@ -14,6 +14,7 @@ interface AppState {
   activeChat: Chat | null
   messages: Message[]
   isStreaming: boolean
+  goalIteration: { current: number; max: number } | null
   connectionMode: ConnectionMode
   directConfig: DirectConfig
   customEndpointConfig: CustomEndpointConfig
@@ -36,7 +37,8 @@ interface AppState {
   addMessage: (message: Message) => void
   appendToken: (token: string) => void
   replaceStreamingMessage: (message: Message) => void
-  setStreaming: (v: boolean) => void
+  setStreaming: (streaming: boolean) => void
+  setGoalIteration: (iteration: { current: number; max: number } | null) => void
   setConnectionMode: (mode: ConnectionMode) => void
   setDirectConfig: (config: DirectConfig) => void
   setCustomEndpointConfig: (config: CustomEndpointConfig) => void
@@ -53,6 +55,7 @@ export const useAppStore = create<AppState>((set) => ({
   activeChat: null,
   messages: [],
   isStreaming: false,
+  goalIteration: null,
   connectionMode: 'direct',
   directConfig: EMPTY_DIRECT_CONFIG,
   customEndpointConfig: EMPTY_CUSTOM_ENDPOINT_CONFIG,
@@ -117,7 +120,8 @@ export const useAppStore = create<AppState>((set) => ({
         messages: state.messages.map((item, index) => (index === streamingIndex ? message : item))
       }
     }),
-  setStreaming: (v) => set({ isStreaming: v }),
+  setStreaming: (streaming) => set({ isStreaming: streaming }),
+  setGoalIteration: (iteration) => set({ goalIteration: iteration }),
   setConnectionMode: (mode) => set({ connectionMode: mode }),
   setDirectConfig: (config) => set({ directConfig: config }),
   setCustomEndpointConfig: (config) => set({ customEndpointConfig: config }),

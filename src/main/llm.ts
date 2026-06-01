@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import OpenAI from 'openai'
 import type { AppConfig, DirectConfig } from '../shared/config'
+import { createMemory, updateChatSummary, type Chat, type Message } from './db'
 
 export interface CompletionMessage {
   role: string
@@ -82,6 +83,21 @@ function getApiKeyForProvider(direct: DirectConfig, provider: Provider): string 
 
 // ─── Streaming helpers ────────────────────────────────────────────────────────
 
+let activeAbortController: AbortController | null = null
+export let isCancelled = false
+
+export function cancelStream(): void {
+  isCancelled = true
+  if (activeAbortController) {
+    activeAbortController.abort()
+    activeAbortController = null
+  }
+}
+
+export function resetCancelled(): void {
+  isCancelled = false
+}
+
 async function streamOpenAICompatible(
   baseURL: string,
   apiKey: string,
@@ -100,8 +116,9 @@ async function streamOpenAICompatible(
         content: msg.content
       })),
       stream: true
-    })
+    }, { signal: activeAbortController?.signal })
     for await (const chunk of stream) {
+      if (isCancelled) break
       const token = chunk.choices[0]?.delta?.content ?? ''
       if (token) onToken(token)
     }
@@ -124,9 +141,10 @@ async function streamAnthropic(
     max_tokens: 4096,
     system: system || undefined,
     messages: conversation
-  })
+  }, { signal: activeAbortController?.signal })
 
   for await (const event of stream) {
+    if (isCancelled) break
     if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
       onToken(event.delta.text)
     }
@@ -142,11 +160,18 @@ async function streamGemini(
   const client = new GoogleGenerativeAI(apiKey)
   const { systemInstruction, contents } = toGeminiContents(messages)
   const generativeModel = client.getGenerativeModel({ model, systemInstruction: systemInstruction || undefined })
-  const result = await generativeModel.generateContentStream({ contents })
+  const result = await generativeModel.generateContentStream({ contents }, { signal: activeAbortController?.signal })
 
-  for await (const chunk of result.stream) {
-    const token = chunk.text()
-    if (token) onToken(token)
+  // The Gemini SDK often hangs while tearing down gRPC connections on abort.
+  // We use an async iterator wrapper to bail out immediately if cancelled.
+  try {
+    for await (const chunk of result.stream) {
+      if (isCancelled) break
+      const token = chunk.text()
+      if (token) onToken(token)
+    }
+  } catch (err: any) {
+    if (err.name !== 'AbortError' && !isCancelled) throw err
   }
 }
 
@@ -208,6 +233,9 @@ export async function streamCompletion(
   onDone: () => void,
   onError: (err: string) => void
 ): Promise<void> {
+  isCancelled = false
+  activeAbortController = new AbortController()
+
   try {
     if (config.mode === 'custom') {
       await streamViaCustomEndpoint(
@@ -222,8 +250,14 @@ export async function streamCompletion(
     } else {
       await streamViaDirect(config.direct, model, messages, onToken, onDone, onError)
     }
-  } catch (error) {
-    onError(errorToMessage(error))
+  } catch (error: any) {
+    if (error?.name !== 'AbortError') {
+      onError(errorToMessage(error))
+    } else {
+      onDone()
+    }
+  } finally {
+    activeAbortController = null
   }
 }
 
@@ -269,7 +303,8 @@ export async function fetchAvailableModels(
 // ─── Chat title generation ────────────────────────────────────────────────────
 
 export async function generateChatTitle(config: AppConfig, model: string, firstUserMessage: string): Promise<string> {
-  const prompt = `Summarize this in 4 words max: ${firstUserMessage}`
+  const prompt = `Generate a short, descriptive title (2-5 words) for a chat that begins with the following message. The title should capture the core topic or intent. Output ONLY the title, no quotes, no punctuation.
+Message: "${firstUserMessage}"`
 
   try {
     if (config.mode === 'custom') {
@@ -279,7 +314,7 @@ export async function generateChatTitle(config: AppConfig, model: string, firstU
       const response = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 20
+        max_tokens: 200
       })
       return cleanTitle(response.choices[0]?.message?.content ?? '')
     }
@@ -292,7 +327,7 @@ export async function generateChatTitle(config: AppConfig, model: string, firstU
       const client = new Anthropic({ apiKey })
       const response = await client.messages.create({
         model,
-        max_tokens: 20,
+        max_tokens: 200,
         messages: [{ role: 'user', content: prompt }]
       })
       return cleanTitle(response.content.map((block) => (block.type === 'text' ? block.text : '')).join(''))
@@ -300,7 +335,7 @@ export async function generateChatTitle(config: AppConfig, model: string, firstU
 
     if (provider === 'gemini') {
       const client = new GoogleGenerativeAI(apiKey)
-      const generativeModel = client.getGenerativeModel({ model, generationConfig: { maxOutputTokens: 20 } })
+      const generativeModel = client.getGenerativeModel({ model, generationConfig: { maxOutputTokens: 200 } })
       const response = await generativeModel.generateContent(prompt)
       return cleanTitle(response.response.text())
     }
@@ -310,11 +345,86 @@ export async function generateChatTitle(config: AppConfig, model: string, firstU
     const response = await client.chat.completions.create({
       model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 20
+      max_tokens: 200
     })
     return cleanTitle(response.choices[0]?.message?.content ?? '')
-  } catch {
+  } catch (err) {
+    console.error('LLM failed to generate title:', err)
     return 'New Chat'
+  }
+}
+
+// ─── Memory Extraction ───────────────────────────────────────────────────────
+
+export async function extractMemories(config: AppConfig, model: string, userMessage: string): Promise<void> {
+  const prompt = `You are a memory extraction assistant.
+Analyze the following message from the user and extract any new, long-term facts, preferences, or details about the user that would be useful to remember for future conversations.
+If there is nothing worth remembering, or it is just conversational filler, output EXACTLY the word "NONE".
+If there are facts to remember, output them as a concise bulleted list, one fact per line, starting with a hyphen.
+
+User message: "${userMessage}"`
+
+  try {
+    let content = ''
+
+    if (config.mode === 'custom') {
+      let base = config.customEndpoint.endpointUrl.trim().replace(/\/$/, '')
+      if (!base.endsWith('/v1')) base = `${base}/v1`
+      const client = new OpenAI({ baseURL: base, apiKey: config.customEndpoint.apiKey || 'dummy-key' })
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }]
+      })
+      content = response.choices[0]?.message?.content ?? ''
+    } else {
+      const provider = detectProvider(model)
+      const apiKey = getApiKeyForProvider(config.direct, provider)
+      if (!apiKey.trim()) return
+
+      if (provider === 'anthropic') {
+        const client = new Anthropic({ apiKey })
+        const response = await client.messages.create({
+          model,
+          max_tokens: 150,
+          messages: [{ role: 'user', content: prompt }]
+        })
+        content = response.content.map((block) => (block.type === 'text' ? block.text : '')).join('')
+      } else if (provider === 'gemini') {
+        const client = new GoogleGenerativeAI(apiKey)
+        const generativeModel = client.getGenerativeModel({ model })
+        const response = await generativeModel.generateContent(prompt)
+        content = response.response.text()
+      } else {
+        const { baseURL } = PROVIDER_CONFIG[provider]
+        const client = new OpenAI({ apiKey, baseURL })
+        const response = await client.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: prompt }]
+        })
+        content = response.choices[0]?.message?.content ?? ''
+      }
+    }
+
+    if (!content) return
+    const lines = content.split('\n').map(l => l.trim()).filter(Boolean)
+    
+    // Check if the response is just "NONE"
+    if (lines.length === 1 && lines[0].replace(/[^\w]/g, '').toUpperCase() === 'NONE') {
+      return
+    }
+
+    // Save extracted bullet points
+    for (const line of lines) {
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        const fact = line.substring(2).trim()
+        if (fact) createMemory(fact)
+      } else if (lines.length === 1 && line.length > 5) {
+        // Sometimes the model forgets bullets if it's just one fact
+        createMemory(line)
+      }
+    }
+  } catch (err) {
+    console.error('LLM failed to extract memory:', err)
   }
 }
 
@@ -362,7 +472,13 @@ function normalizeOpenAIRole(role: string): 'system' | 'user' | 'assistant' {
 }
 
 function cleanTitle(value: string): string {
-  const title = value.replace(/["""]/g, '').replace(/\s+/g, ' ').trim()
+  let title = value.replace(/["""]/g, '').replace(/\s+/g, ' ').trim()
+  
+  // If a local model ignored the "4 words max" instruction and returned a paragraph, truncate it
+  if (title.length > 50) {
+    title = title.substring(0, 47) + '...'
+  }
+  
   return title || 'New Chat'
 }
 
@@ -370,4 +486,83 @@ function errorToMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error
   return 'Unknown LLM error'
+}
+
+export async function compactHistory(chat: Chat, allMsgs: Message[], config: AppConfig): Promise<void> {
+  try {
+    const KEEP_COUNT = 10
+    
+    let recentIndex = 0
+    if (chat.summary_through_id) {
+      const idx = allMsgs.findIndex(m => m.id === chat.summary_through_id)
+      if (idx !== -1) recentIndex = idx + 1
+    }
+    
+    const unsummarized = allMsgs.slice(recentIndex)
+    if (unsummarized.length <= KEEP_COUNT) return
+    
+    const toSummarize = unsummarized.slice(0, unsummarized.length - KEEP_COUNT)
+    const newThroughId = toSummarize[toSummarize.length - 1].id
+    
+    let textToSummarize = ''
+    if (chat.context_summary) {
+      textToSummarize += `Previous Summary:\n${chat.context_summary}\n\n`
+    }
+    
+    textToSummarize += `New messages to integrate into the summary:\n`
+    for (const msg of toSummarize) {
+      textToSummarize += `[${msg.role}]: ${msg.content}\n`
+    }
+    
+    const prompt = `Summarize this conversation so far in 300 words or fewer. Preserve: key decisions made, any code/technical details discussed, the user's current goal, and any commitments or action items. Do not editorialize.
+    
+${textToSummarize}`
+
+    let content = ''
+    const model = chat.model
+
+    if (config.mode === 'custom') {
+      let base = config.customEndpoint.endpointUrl.trim().replace(/\/$/, '')
+      if (!base.endsWith('/v1')) base = `${base}/v1`
+      const client = new OpenAI({ baseURL: base, apiKey: config.customEndpoint.apiKey || 'dummy-key' })
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }]
+      })
+      content = response.choices[0]?.message?.content ?? ''
+    } else {
+      const provider = detectProvider(model)
+      const apiKey = getApiKeyForProvider(config.direct, provider)
+      if (!apiKey.trim()) return
+
+      if (provider === 'anthropic') {
+        const client = new Anthropic({ apiKey })
+        const response = await client.messages.create({
+          model,
+          max_tokens: 350,
+          messages: [{ role: 'user', content: prompt }]
+        })
+        content = response.content.map((block) => (block.type === 'text' ? block.text : '')).join('')
+      } else if (provider === 'gemini') {
+        const client = new GoogleGenerativeAI(apiKey)
+        const generativeModel = client.getGenerativeModel({ model })
+        const response = await generativeModel.generateContent(prompt)
+        content = response.response.text()
+      } else {
+        const { baseURL } = PROVIDER_CONFIG[provider]
+        const client = new OpenAI({ apiKey, baseURL })
+        const response = await client.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: prompt }]
+        })
+        content = response.choices[0]?.message?.content ?? ''
+      }
+    }
+
+    if (content) {
+      updateChatSummary(chat.id, content, newThroughId)
+    }
+  } catch (err) {
+    console.error('LLM failed to compact history:', err)
+  }
 }

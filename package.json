@@ -1,7 +1,7 @@
 {
   "name": "prism",
   "productName": "Prism",
-  "version": "1.0.0",
+  "version": "2.0.9",
   "description": "Every model. One interface. — A cross-platform AI desktop chat client for any provider.",
   "main": "./out/main/index.js",
   "author": {
@@ -18,8 +18,9 @@
   },
   "homepage": "https://github.com/IterationLabz/prism",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "copy:wasm": "node scripts/copy-wasm.js",
+    "dev": "npm run copy:wasm && electron-vite dev",
+    "build": "npm run copy:wasm && electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "package": "npm run build && electron-builder --publish never",
@@ -30,9 +31,12 @@
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
     "@google/generative-ai": "latest",
+    "@mintplex-labs/piper-tts-web": "^1.0.4",
     "better-sqlite3": "latest",
     "highlight.js": "latest",
+    "kokoro-js": "^1.2.1",
     "lucide-react": "latest",
+    "nodejs-whisper": "^0.3.0",
     "openai": "latest",
     "react": "latest",
     "react-dom": "latest",
@@ -63,6 +67,10 @@
     "directories": {
       "output": "dist"
     },
+    "asarUnpack": [
+      "out/renderer/**/*.wasm",
+      "out/renderer/**/*.mjs"
+    ],
     "files": [
       "out/**/*",
       "package.json"
@@ -74,16 +82,28 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Prism needs microphone access for Conversational Mode and voice transcription."
+      },
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico"
@@ -98,7 +118,9 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Utility",

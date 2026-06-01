@@ -9,6 +9,8 @@ export interface Chat {
   model: string
   created_at: number
   updated_at: number
+  context_summary?: string
+  summary_through_id?: string
 }
 
 export interface Message {
@@ -19,11 +21,18 @@ export interface Message {
   created_at: number
 }
 
+export interface Memory {
+  id: string
+  content: string
+  created_at: number
+}
+
 type IpcResult<T> = { success: true; data: T } | { success: false; error: string }
 
 export interface Api {
   chats: {
     getAll: () => Promise<Chat[]>
+    search: (query: string) => Promise<Chat[]>
     create: (meta?: Partial<Pick<Chat, 'provider' | 'model'>>) => Promise<Chat>
     delete: (id: string) => Promise<void>
     updateTitle: (id: string, title: string) => Promise<Chat | null>
@@ -33,13 +42,20 @@ export interface Api {
     getAll: (chatId: string) => Promise<Message[]>
     create: (input: { chatId: string; role: Role; content: string }) => Promise<Message>
   }
+  memories: {
+    getAll: () => Promise<Memory[]>
+    delete: (id: string) => Promise<void>
+  }
   llm: {
     stream: (chatId: string, userMessage: string, model: string) => void
+    streamGoal: (chatId: string, userMessage: string, model: string, maxIterations?: number) => void
+    cancel: () => void
     onToken: (callback: (token: string) => void) => void
     onDone: (callback: () => void) => void
     onError: (callback: (message: string) => void) => void
     onMessageCreated: (callback: (message: Message) => void) => void
     onChatUpdated: (callback: (chat: Chat) => void) => void
+    onGoalIteration: (callback: (iteration: { current: number; max: number }) => void) => void
     removeStreamListeners: () => void
   }
   settings: {
@@ -56,11 +72,18 @@ export interface Api {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
+  voice: {
+    transcribe: (audioBytes: number[]) => Promise<{ success: boolean; text: string; error: string | null }>
+  }
+  debug: {
+    saveFile: (filename: string, buffer: ArrayBuffer) => Promise<{ success: boolean; error?: string }>
+  }
 }
 
 const api: Api = {
   chats: {
     getAll: () => invoke('chats:getAll'),
+    search: (query) => invoke('chats:search', query),
     create: (meta) => invoke('chats:create', meta),
     delete: (id) => invoke('chats:delete', id),
     updateTitle: (id, title) => invoke('chats:updateTitle', id, title),
@@ -70,8 +93,16 @@ const api: Api = {
     getAll: (chatId) => invoke('messages:getAll', chatId),
     create: (input) => invoke('messages:create', input)
   },
+  memories: {
+    getAll: () => invoke('memories:getAll'),
+    delete: (id) => invoke('memories:delete', id)
+  },
   llm: {
     stream: (chatId, userMessage, model) => ipcRenderer.send('llm:stream', chatId, userMessage, model),
+    streamGoal: (chatId, userMessage, model, maxIterations = 10) => {
+      ipcRenderer.send('llm:stream-goal', chatId, userMessage, model, maxIterations)
+    },
+    cancel: () => ipcRenderer.send('llm:cancel'),
     onToken: (callback) => {
       ipcRenderer.on('llm:token', (_event, token: string) => callback(token))
     },
@@ -87,12 +118,16 @@ const api: Api = {
     onChatUpdated: (callback) => {
       ipcRenderer.on('chats:updated', (_event, chat: Chat) => callback(chat))
     },
+    onGoalIteration: (callback) => {
+      ipcRenderer.on('llm:goal-iteration', (_event, iteration) => callback(iteration))
+    },
     removeStreamListeners: () => {
       ipcRenderer.removeAllListeners('llm:token')
       ipcRenderer.removeAllListeners('llm:done')
       ipcRenderer.removeAllListeners('llm:error')
       ipcRenderer.removeAllListeners('messages:created')
       ipcRenderer.removeAllListeners('chats:updated')
+      ipcRenderer.removeAllListeners('llm:goal-iteration')
     }
   },
   settings: {
@@ -108,6 +143,12 @@ const api: Api = {
   },
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url)
+  },
+  voice: {
+    transcribe: (audioBytes) => ipcRenderer.invoke('voice:transcribe', audioBytes)
+  },
+  debug: {
+    saveFile: (filename, buffer) => ipcRenderer.invoke('debug:saveFile', filename, buffer)
   }
 }
 

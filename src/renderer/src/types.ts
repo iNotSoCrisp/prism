@@ -13,6 +13,8 @@ export interface Chat {
   model: string
   created_at: number
   updated_at: number
+  context_summary?: string
+  summary_through_id?: string
 }
 
 export interface Message {

@@ -80,3 +80,21 @@ coverage/
 
 # ─── Misc ────────────────────────────────────────────────────────────
 *.asar
+
+# ─── Generated Assets ──────────────────────────────────────────────────
+src/renderer/public/wasm/
+
+# ─── Private & Temporary ─────────────────────────────────────────────
+set_groq_key.js
+.claude/
+.gemini/
+scratch/
+handoff_context*.md
+*.wav
+*.mp3
+test-chunker.js
+test-net-fetch.js
+test-stream.js
+test_parser.js
+test_parser_markdown.js
+download_model.py

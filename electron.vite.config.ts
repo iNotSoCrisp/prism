@@ -7,9 +7,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: {
-          index: resolve(__dirname, 'src/main/index.ts')
-        }
+        input: { index: resolve(__dirname, 'src/main/index.ts') }
       }
     }
   },
@@ -17,14 +15,13 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: {
-          index: resolve(__dirname, 'src/preload.ts')
-        }
+        input: { index: resolve(__dirname, 'src/preload.ts') }
       }
     }
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
-    plugins: [react()]
+    plugins: [react()],
+    worker: { format: 'es' }
   }
 })

@@ -14,6 +14,14 @@ export interface Chat {
   model: string
   created_at: number
   updated_at: number
+  context_summary?: string
+  summary_through_id?: string
+}
+
+export interface Memory {
+  id: string
+  content: string
+  created_at: number
 }
 
 export interface Message {
@@ -67,11 +75,40 @@ export function createTables(database = getDb()): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `)
+  
+  // Safe schema migrations for new columns
+  try {
+    database.exec('ALTER TABLE chats ADD COLUMN context_summary TEXT;')
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
+  try {
+    database.exec('ALTER TABLE chats ADD COLUMN summary_through_id TEXT;')
+  } catch (e) {
+    // Column already exists, ignore
+  }
 }
 
 export function getAllChats(): Chat[] {
   return getDb().prepare('SELECT * FROM chats ORDER BY updated_at DESC').all() as Chat[]
+}
+
+export function searchChats(query: string): Chat[] {
+  const searchTerm = `%${query}%`
+  return getDb().prepare(`
+    SELECT DISTINCT chats.* FROM chats
+    LEFT JOIN messages ON chats.id = messages.chat_id
+    WHERE chats.title LIKE ? OR messages.content LIKE ?
+    ORDER BY chats.updated_at DESC
+  `).all(searchTerm, searchTerm) as Chat[]
 }
 
 export function getChat(id: string): Chat | null {
@@ -106,6 +143,12 @@ export function updateChatTitle(id: string, title: string): Chat | null {
   const cleanTitle = title.trim() || 'New Chat'
   const now = Date.now()
   getDb().prepare('UPDATE chats SET title = ?, updated_at = ? WHERE id = ?').run(cleanTitle, now, id)
+  return getChat(id)
+}
+
+export function updateChatSummary(id: string, summary: string, throughId: string): Chat | null {
+  const now = Date.now()
+  getDb().prepare('UPDATE chats SET context_summary = ?, summary_through_id = ?, updated_at = ? WHERE id = ?').run(summary, throughId, now, id)
   return getChat(id)
 }
 
@@ -160,6 +203,24 @@ export function setSetting(key: string, value: string): void {
 
 export const getSettings = getSetting
 export const setSettings = setSetting
+
+export function getAllMemories(): Memory[] {
+  return getDb().prepare('SELECT * FROM memories ORDER BY created_at DESC').all() as Memory[]
+}
+
+export function createMemory(content: string): Memory {
+  const memory: Memory = {
+    id: randomUUID(),
+    content: content.trim(),
+    created_at: Date.now()
+  }
+  getDb().prepare('INSERT INTO memories (id, content, created_at) VALUES (@id, @content, @created_at)').run(memory)
+  return memory
+}
+
+export function deleteMemory(id: string): void {
+  getDb().prepare('DELETE FROM memories WHERE id = ?').run(id)
+}
 
 export function closeDb(): void {
   db?.close()

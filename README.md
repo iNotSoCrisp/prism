@@ -37,6 +37,9 @@ Most AI chat apps lock you into a single provider. Prism doesn't. Add API keys f
 | Feature | Details |
 |---------|---------|
 | **Multi-provider** | 12 providers supported out of the box — OpenAI, Anthropic, Google, Groq, Cerebras, Fireworks, DeepSeek, Moonshot, Qwen, Mistral, xAI, OpenRouter |
+| **Conversational Mode** | Seamless voice chats with real-time audio transcription powered by local `nodejs-whisper` (or optionally accelerated via Groq API) |
+| **Local Text-to-Speech** | Fully offline, multi-threaded TTS streaming via `kokoro-js` and ONNX WASM — zero cloud latency |
+| **Cross-chat Memory** | Automatically extracts and remembers user preferences across all conversations |
 | **Custom endpoints** | Any OpenAI-compatible server — Ollama, LM Studio, vLLM, Jan.ai, LiteLLM, Azure |
 | **Live model discovery** | Fetches available models directly from provider APIs and `/v1/models` |
 | **Persistent history** | All chats stored locally in SQLite — no cloud, no sync, no telemetry |
@@ -86,6 +89,7 @@ Point Prism at any OpenAI-compatible URL. Models are auto-detected from `/v1/mod
 | Styling | Tailwind CSS |
 | State | Zustand |
 | Storage | better-sqlite3 (local SQLite) |
+| Voice & Audio | kokoro-js (TTS) · nodejs-whisper (STT) · onnxruntime-web |
 | Rendering | react-markdown + rehype-highlight |
 | LLM SDKs | OpenAI SDK · Anthropic SDK · Google Generative AI SDK |
 
@@ -108,6 +112,11 @@ node --version   # Must be 18.0.0 or higher
 npm --version    # Must be 9.0.0 or higher
 git --version    # Any recent version
 ```
+
+> **Important:** Prism relies on native C/C++ Node modules (`better-sqlite3` and `nodejs-whisper`). To build from source, you **must** have native build tools installed on your system:
+> - **macOS**: `xcode-select --install`
+> - **Windows**: Install Visual Studio Build Tools with the "Desktop development with C++" workload
+> - **Linux**: `sudo apt install build-essential python3`
 
 ### 1. Clone & Install
 
@@ -148,6 +157,8 @@ npm run package:mac     # macOS (.dmg for both Apple Silicon and Intel)
 npm run package:win     # Windows (.exe NSIS installer)
 npm run package:linux   # Linux (.AppImage)
 ```
+
+> **Note on Windows Releases:** Automated GitHub Action releases currently skip Windows packaging due to CI file-size memory constraints during ASAR bundling of local TTS models. If you need Prism on Windows, simply clone the repo and run `npm run package:win` locally on your machine—it will compile perfectly.
 
 > **Note:** You can only package for the OS you're running on. To package for a different OS, run the package command on that OS.
 
@@ -284,15 +295,15 @@ Or set the environment variable permanently in your shell profile.
 </details>
 
 <details>
-<summary><strong>better-sqlite3 native module errors</strong></summary>
+<summary><strong>better-sqlite3 or nodejs-whisper native module errors</strong></summary>
 
-If you see errors about `better-sqlite3` failing to load after install:
+If you see errors about `better-sqlite3` or `nodejs-whisper` failing to load native bindings after install:
 
 ```bash
-npm rebuild better-sqlite3
+npm run postinstall
 ```
 
-If that doesn't work, do a clean reinstall:
+If that doesn't work, ensure you have the native build tools installed (see Prerequisites), then do a clean reinstall:
 
 ```bash
 rm -rf node_modules package-lock.json
@@ -307,9 +318,10 @@ npm install
 
 Planned features for upcoming releases:
 
+- [x] Cross-chat memory (Autonomous background extraction)
+- [x] Native Voice Mode (Local TTS & Speech-to-Text)
 - [ ] System prompt presets (save and reuse custom system prompts)
 - [ ] Image and file attachments for vision models
-- [ ] Cross-chat memory and search
 - [ ] Export chats as Markdown or JSON
 - [ ] Light theme
 - [ ] Auto-update via electron-updater
@@ -327,6 +339,8 @@ Prism is built on the shoulders of incredible open source projects:
 - [React](https://react.dev/) — UI framework
 - [Zustand](https://github.com/pmndrs/zustand) — lightweight state management
 - [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) — fast, synchronous SQLite
+- [kokoro-js](https://github.com/huggingface/kokoro.js) — incredible offline TTS model
+- [nodejs-whisper](https://github.com/chengazhen/nodejs-whisper) — local STT transcription
 - [react-markdown](https://github.com/remarkjs/react-markdown) + [rehype-highlight](https://github.com/rehypejs/rehype-highlight) — markdown rendering with syntax highlighting
 - [electron-vite](https://electron-vite.org/) — next-gen build tooling for Electron
 - [Lucide](https://lucide.dev/) — beautiful icon set
@@ -343,4 +357,4 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines 
 
 ## License
 
-MIT © [Iteration Labz](https://github.com/IterationLabz)
+MIT © Shubh Arya and [Iteration Labz](https://github.com/IterationLabz)

@@ -16,6 +16,7 @@ export default function App() {
     activeChat,
     messages,
     isStreaming,
+    goalIteration,
     defaultModel,
     setChats,
     setActiveChat,
@@ -25,6 +26,7 @@ export default function App() {
     appendToken,
     replaceStreamingMessage,
     setStreaming,
+    setGoalIteration,
     setConnectionMode,
     setDirectConfig,
     setCustomEndpointConfig,
@@ -148,10 +150,43 @@ export default function App() {
   useEffect(() => {
     if (!window.api) return
 
+    let tokenBuffer = ''
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+    const flushTokens = () => {
+      flushTimer = null
+      if (tokenBuffer) {
+        const batch = tokenBuffer
+        tokenBuffer = ''
+        appendToken(batch)
+      }
+    }
+
     window.api.llm.removeStreamListeners()
-    window.api.llm.onToken((token) => appendToken(token))
-    window.api.llm.onDone(() => setStreaming(false))
+
+    window.api.llm.onToken((token) => {
+      tokenBuffer += token
+      if (flushTimer === null) {
+        flushTimer = setTimeout(flushTokens, 16)
+      }
+    })
+
+    window.api.llm.onDone(() => {
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      flushTokens()
+      setStreaming(false)
+      setGoalIteration(null)
+    })
+
     window.api.llm.onError((message) => {
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      flushTokens()
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
         chat_id: useAppStore.getState().activeChat?.id ?? '',
@@ -162,11 +197,24 @@ export default function App() {
       }
       replaceStreamingMessage(errorMessage)
       setStreaming(false)
+      setGoalIteration(null)
     })
-    window.api.llm.onMessageCreated((message) => replaceStreamingMessage(message))
+
+    window.api.llm.onMessageCreated((message) => {
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      flushTokens()
+      replaceStreamingMessage(message)
+    })
+
+    window.api.llm.onGoalIteration((iteration) => setGoalIteration(iteration))
+
     window.api.llm.onChatUpdated((chat) => upsertChat(chat))
 
     return () => {
+      if (flushTimer !== null) clearTimeout(flushTimer)
       window.api?.llm.removeStreamListeners()
     }
   }, [appendToken, replaceStreamingMessage, setStreaming, upsertChat])
@@ -200,7 +248,45 @@ export default function App() {
     async (content: string) => {
       if (!window.api || !activeChat || isStreaming || !content.trim()) return
       setStreaming(true)
-      window.api.llm.stream(activeChat.id, content.trim(), activeChat.model)
+      
+      let text = content.trim()
+      
+      // Voice trigger interception
+      // 1. Specific iterations: "turn on goal mode for 5 iterations"
+      const iterRegex = /(?:\b(?:turn on|run|execute)(?: the)? goal mode for (\d+) iterations\b)[.,!?]*/gi
+      // 2. Infinite goal mode: "turn on infinite goal mode"
+      const infRegex = /(?:\b(?:turn on|run|execute)(?: the)? infinite goal mode\b)[.,!?]*/gi
+      // 3. Default goal mode: "turn on goal mode"
+      const defaultRegex = /(?:\b(?:turn on|run|execute)(?: the)? goal mode\b)[.,!?]*/gi
+
+      if (iterRegex.test(text)) {
+        // Reset lastIndex because test() advances it
+        iterRegex.lastIndex = 0
+        const match = iterRegex.exec(text)
+        const iterations = match ? match[1] : ''
+        const textWithoutTrigger = text.replace(iterRegex, '').trim()
+        text = `/goal${iterations} ${textWithoutTrigger}`
+      } else if (infRegex.test(text)) {
+        const textWithoutTrigger = text.replace(infRegex, '').trim()
+        text = `/goalinf ${textWithoutTrigger}`
+      } else if (defaultRegex.test(text)) {
+        const textWithoutTrigger = text.replace(defaultRegex, '').trim()
+        text = `/goal ${textWithoutTrigger}`
+      }
+      
+      const infMatch = text.match(/^\/goalinf\s+(.*)/is)
+      const goalMatch = text.match(/^\/goal(\d*)\s+(.*)/is)
+      
+      if (infMatch) {
+        const goalText = infMatch[1].trim()
+        window.api.llm.streamGoal(activeChat.id, goalText, activeChat.model, Number.MAX_SAFE_INTEGER)
+      } else if (goalMatch) {
+        const iterations = goalMatch[1] ? parseInt(goalMatch[1], 10) : 10
+        const goalText = goalMatch[2].trim()
+        window.api.llm.streamGoal(activeChat.id, goalText, activeChat.model, iterations)
+      } else {
+        window.api.llm.stream(activeChat.id, text, activeChat.model)
+      }
     },
     [activeChat, isStreaming, setStreaming]
   )
@@ -283,7 +369,7 @@ export default function App() {
       />
       <main className="chat-main">
         <TopBar chat={normalizedActiveChat} onTitleChange={updateTitle} onMetaChange={updateMeta} />
-        <ChatWindow chat={normalizedActiveChat} messages={messages} isStreaming={isStreaming} onSend={sendMessage} />
+        <ChatWindow chat={normalizedActiveChat} messages={messages} isStreaming={isStreaming} goalIteration={goalIteration} onSend={sendMessage} />
       </main>
       {settingsOpen && <SettingsModal initialTab={settingsTab} onClose={() => setSettingsOpen(false)} />}
     </div>
